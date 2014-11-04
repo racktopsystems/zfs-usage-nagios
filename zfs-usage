@@ -118,7 +118,6 @@ if __name__ == "__main__":
         used_crit, used_warn = used * args.critical, used * args.warning
 
         if used_pct >= args.critical:
-            print(used_pct)
             print(TPL.safe_substitute(dataset=ds,
                                       used=used,
                                       usedraw=add_suffix(used),
