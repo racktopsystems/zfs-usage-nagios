@@ -1,0 +1,143 @@
+#!/usr/bin/env python
+# Copyright 2009-2014 RackTop Systems Inc. and/or its affiliates.
+# http://www.racktopsystems.com
+#
+# The contents of this file are subject to the terms of the RackTop Commercial
+# License ("RTCL"). You may not use, redistribute, or modify this file in source
+# or binary forms except in compliance with the RTCL. You can obtain a copy at
+# http://racktopsystems.com/legal/rtcl.txt.
+#
+# Author: Sam Zaydel
+# Description: zfs-usage is a Nagios remote check, which returns used space by
+# given dataset and based on parameters for WARNING and CRITICAL will also
+# prompt if the state is OK, WARNING, or CRITICAL.
+#
+#
+import argparse
+import sys
+from string import atof, atoi
+from subprocess import check_output, STDOUT, CalledProcessError
+from shlex import split
+from string import Template
+
+STATE_OK        = 0  # define the exit code if status is OK
+STATE_WARNING   = 1  # define the exit code if status is Warning
+STATE_CRITICAL  = 2  # define the exit code if status is Critical
+STATE_UNKNOWN   = 3  # define the exit code if status is Unknown
+
+MB = 1 << 20
+GB = 1 << 30
+TB = 1 << 40
+
+LEVELS = ["OK", "WARNING", "CRITICAL", "UNKNOWN"]
+STRING_SEP = '\t'
+CMD_DESC  = 'Check ZFS dataset size and get warning or citical notification' \
+            ' if above either threshold.'
+WARN_HELP = 'percent of capacity at which free space ' \
+            'is considered warning - range 0.1 to 1.0, example: 0.8'
+CRIT_HELP = 'percent of capacity at which free space ' \
+            'is considered critical - range 0.1 to 1.0, example: 0.8'
+# Last two parameters in template are 0's, which map to min and max values,
+# which in the case of a dataset's capacity are typically undefined.
+# Nagios plugin doc states that this is the format to use to the right of
+# the `|` pipe character.
+# 'label'=value[UOM];[warn];[crit];[min];[max]
+TPL = Template("zfs dataset $dataset usage is $level "
+               "$used | \'$dataset\'=$usedraw;$usedwarn;$usedcrit;0;0")
+
+
+class FailedCallZFSCommand(CalledProcessError):
+    pass
+
+
+def add_suffix(n):
+    tpl = "%d%s"
+    if n >> 20 < 1024:
+        suf = "M"
+        return tpl % (n / MB, suf)
+    if n >> 30 < 1024:
+        suf = "G"
+        return tpl % (n / GB, suf)
+    else:
+        suf = "T"
+        return tpl % (n / TB, suf)
+
+
+def run_zfs_command(dataset):
+    cmd = "/usr/sbin/zfs list -H -p -o space %s" % dataset
+    cmd_list = split(cmd)
+    try:
+        retcode = 0
+        output = check_output(cmd_list, stderr=STDOUT)
+    except CalledProcessError as e:
+        retcode = e.returncode
+        output = e.output
+    return retcode, output
+
+# Configure argument parser with necessary command line options
+# and positional arguments.
+parser = argparse.ArgumentParser(description=CMD_DESC)
+parser.add_argument('path',
+                    type=str,
+                    help='Path to dataset for which size is being '
+                         'gathered, example: poolA/ds01'
+                    )
+parser.add_argument('--crit', '-c',
+                    type=float,
+                    default=0.80,
+                    nargs='?',
+                    dest='critical',
+                    help=CRIT_HELP
+                    )
+parser.add_argument('--warn', '-w',
+                    type=float,
+                    nargs='?',
+                    dest='warning',
+                    default=0.60,
+                    help=WARN_HELP
+                    )
+
+
+if __name__ == "__main__":
+    args = parser.parse_args()
+
+    ds = args.path  # dataset being checked
+    rc, data = run_zfs_command(ds)
+    if rc != 0:  # If anything but zero, call failed, we are done
+        sys.stderr.write("Failed to complete task with err: %s\n" % data)
+        sys.exit(STATE_UNKNOWN)
+    else:
+        # Get name of dataset, available and used, discard remainder of line
+        name, avail, used, _ = \
+            data.split(STRING_SEP, 3)  # unpack split string into 4 vars
+        used_pct = atof(used) / atof(avail)  # Float 0.1 =< 1.0
+        used = atoi(used)  # This should be an int, not string
+        used_crit, used_warn = used * args.warning, used * args.critical
+
+        if used_pct >= args.critical:
+            print(used_pct)
+            print(TPL.safe_substitute(dataset=ds,
+                                      used=add_suffix(used),
+                                      usedraw=used,
+                                      usedwarn=used_warn,
+                                      usedcrit=used_crit,
+                                      level=LEVELS[2]))
+            sys.exit(STATE_CRITICAL)
+
+        # If less than critical, but > or = warning, WARN
+        elif used_pct >= args.warning:
+            print(TPL.safe_substitute(dataset=ds,
+                                      used=add_suffix(used),
+                                      usedraw=used,
+                                      usedwarn=used_warn,
+                                      usedcrit=used_crit,
+                                      level=LEVELS[1]))
+            sys.exit(STATE_WARNING)
+        else:
+            print(TPL.safe_substitute(dataset=ds,
+                                      used=add_suffix(used),
+                                      usedraw=used,
+                                      usedwarn=used_warn,
+                                      usedcrit=used_crit,
+                                      level=LEVELS[0]))
+            sys.exit(STATE_OK)
