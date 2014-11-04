@@ -115,7 +115,7 @@ if __name__ == "__main__":
             data.split(STRING_SEP, 3)  # unpack split string into 4 vars
         used_pct = atof(used) / atof(avail)  # Float 0.1 =< 1.0
         used = atoi(used)  # This should be an int, not string
-        used_crit, used_warn = used * args.warning, used * args.critical
+        used_crit, used_warn = used * args.critical, used * args.warning
 
         if used_pct >= args.critical:
             print(used_pct)
