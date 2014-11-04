@@ -116,6 +116,7 @@ if __name__ == "__main__":
         used_pct = 1 - (atof(avail) /
                         (atof(avail) + atof(used)))  # Float 0.1 =< 1.0
         used = atoi(used)  # This should be an int, not string
+        avail = atoi(avail)
         used_crit, used_warn = (used + avail) * args.critical, \
                                (used + avail) * args.warning
 
