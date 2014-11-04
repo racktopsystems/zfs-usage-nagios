@@ -15,6 +15,7 @@
 #
 import argparse
 import sys
+import types
 from string import atof, atoi
 from subprocess import check_output, STDOUT, CalledProcessError
 from shlex import split
@@ -52,6 +53,8 @@ class FailedCallZFSCommand(CalledProcessError):
 
 def add_suffix(n):
     tpl = "%d%s"
+    if isinstance(n, types.FloatType):
+        n = int(n)
     if n >> 20 < 1024:
         suf = "M"
         return tpl % (n / MB, suf)
