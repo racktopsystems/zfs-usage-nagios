@@ -113,7 +113,8 @@ if __name__ == "__main__":
         # Get name of dataset, available and used, discard remainder of line
         name, avail, used, _ = \
             data.split(STRING_SEP, 3)  # unpack split string into 4 vars
-        used_pct = atof(used) / atof(avail)  # Float 0.1 =< 1.0
+        used_pct = 1 - (atof(avail) /
+                        (atof(avail) + atof(used)))  # Float 0.1 =< 1.0
         used = atoi(used)  # This should be an int, not string
         used_crit, used_warn = used * args.critical, used * args.warning
 
