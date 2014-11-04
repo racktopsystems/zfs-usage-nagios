@@ -16,6 +16,8 @@
 import argparse
 import sys
 import types
+
+from os import uname
 from string import atof, atoi
 from subprocess import check_output, STDOUT, CalledProcessError
 from shlex import split
@@ -26,6 +28,8 @@ STATE_WARNING   = 1  # define the exit code if status is Warning
 STATE_CRITICAL  = 2  # define the exit code if status is Critical
 STATE_UNKNOWN   = 3  # define the exit code if status is Unknown
 
+B  = 1
+KB = 1 << 10
 MB = 1 << 20
 GB = 1 << 30
 TB = 1 << 40
@@ -44,17 +48,45 @@ CRIT_HELP = 'percent of capacity at which free space ' \
 # the `|` pipe character.
 # 'label'=value[UOM];[warn];[crit];[min];[max]
 TPL = Template("zfs dataset $dataset usage is $level "
-               "$used | \'$dataset\'=$usedraw;$usedwarn;$usedcrit;0;0")
+               "used = $used total = $total "
+               "| \'$dataset\'=${usedraw}B;${usedwarn}B;${usedcrit}B;0;0")
+
+
+platform = uname()[0].lower()
 
 
 class FailedCallZFSCommand(CalledProcessError):
     pass
 
 
+class UnknownOSPlatform(Exception):
+    pass
+
+
+def _atox(v, f):
+    if not isinstance(v, types.StringType):
+        return 0
+    if not v.isdigit():
+        return atof(multiple_to_byte(v))
+    else:
+        return f(v)
+
+
+def atoic(v):
+    return _atox(v, atoi)
+
+
+def atofc(v):
+    return _atox(v, atof)
+
+
 def add_suffix(n):
     tpl = "%d%s"
     if isinstance(n, types.FloatType):
         n = int(n)
+    if n >> 10 < 1024:
+        suf = "KB"
+        return tpl % (n / KB, suf)
     if n >> 20 < 1024:
         suf = "M"
         return tpl % (n / MB, suf)
@@ -66,15 +98,62 @@ def add_suffix(n):
         return tpl % (n / TB, suf)
 
 
-def run_zfs_command(dataset):
-    cmd = "/usr/sbin/zfs list -H -p -o space %s" % dataset
-    cmd_list = split(cmd)
+def multiple_to_byte(s):
+    """ multiple_to_type takes a string, like 1M or 100G and converts it to
+    it value in bytes. This string may or may not have a `.` and if it does,
+    it is like a float, else an int is assumed.
+    :param s: String - assume a capacity value, like 100G
+    :return: Int - bytes representing passed in value
+    """
+    broken = -1
+    unit_map = {
+        "K": lambda _: KB * _,
+        "M": lambda _: MB * _,
+        "G": lambda _: GB * _,
+        "T": lambda _: TB * _,
+    }
+
+    digit, unit = s[:-1], s[-1]
     try:
-        retcode = 0
-        output = check_output(cmd_list, stderr=STDOUT)
-    except CalledProcessError as e:
-        retcode = e.returncode
-        output = e.output
+        if "." in digit:
+            digit = float(digit)
+        else:
+            digit = int(digit)
+        return unit_map[unit](digit)
+    except ValueError:
+        return broken
+
+
+def run_zfs_command(dataset):
+    """ run_zfs_command takes a dataset path, and calls zfs list to obtain
+    information about the dataset size and available space to it.
+
+    If platform is unknown this routine will blow-up and so will the rest
+    of this program.
+
+    :param dataset: String - path to dataset without leading `/`
+    :return: Tuple - return code and resulting string (int, string)
+    """
+    if platform == "sunos":  # Assume legacy, i.e. NZA-based system
+        cmd = "/usr/sbin/zfs list -H -o space %s" % dataset
+        cmd_list = split(cmd)
+        try:
+            retcode = 0
+            output = check_output(cmd_list, stderr=STDOUT)
+        except CalledProcessError as e:
+            retcode = e.returncode
+            output = e.output
+    elif platform == "brickstoros":
+        cmd = "/usr/sbin/zfs list -H -p -o space %s" % dataset
+        cmd_list = split(cmd)
+        try:
+            retcode = 0
+            output = check_output(cmd_list, stderr=STDOUT)
+        except CalledProcessError as e:
+            retcode = e.returncode
+            output = e.output
+    else:
+        raise UnknownOSPlatform("%s is an unsupported platform" % platform)
     return retcode, output
 
 # Configure argument parser with necessary command line options
@@ -113,36 +192,40 @@ if __name__ == "__main__":
         # Get name of dataset, available and used, discard remainder of line
         name, avail, used, _ = \
             data.split(STRING_SEP, 3)  # unpack split string into 4 vars
-        used_pct = 1 - (atof(avail) /
-                        (atof(avail) + atof(used)))  # Float 0.1 =< 1.0
-        used = atoi(used)  # This should be an int, not string
-        avail = atoi(avail)
+        used_pct = 1 - (atofc(avail) /
+                        (atofc(avail) + atofc(used)))  # Float 0.1 =< 1.0
+        used = atoic(used)  # This should be an int, not string
+        avail = atoic(avail)
+        total = used + avail
         used_crit, used_warn = (used + avail) * args.critical, \
                                (used + avail) * args.warning
 
         if used_pct >= args.critical:
             print(TPL.safe_substitute(dataset=ds,
-                                      used=used,
-                                      usedraw=add_suffix(used),
-                                      usedwarn=add_suffix(used_warn),
-                                      usedcrit=add_suffix(used_crit),
+                                      total=add_suffix(total),
+                                      used=add_suffix(used),
+                                      usedraw=used,
+                                      usedwarn=used_warn,
+                                      usedcrit=used_crit,
                                       level=LEVELS[2]))
             sys.exit(STATE_CRITICAL)
 
         # If less than critical, but > or = warning, WARN
         elif used_pct >= args.warning:
             print(TPL.safe_substitute(dataset=ds,
-                                      used=used,
-                                      usedraw=add_suffix(used),
-                                      usedwarn=add_suffix(used_warn),
-                                      usedcrit=add_suffix(used_crit),
+                                      total=add_suffix(total),
+                                      used=add_suffix(used),
+                                      usedraw=used,
+                                      usedwarn=used_warn,
+                                      usedcrit=used_crit,
                                       level=LEVELS[1]))
             sys.exit(STATE_WARNING)
         else:
             print(TPL.safe_substitute(dataset=ds,
-                                      used=used,
-                                      usedraw=add_suffix(used),
-                                      usedwarn=add_suffix(used_warn),
-                                      usedcrit=add_suffix(used_crit),
+                                      total=add_suffix(total),
+                                      used=add_suffix(used),
+                                      usedraw=used,
+                                      usedwarn=used_warn,
+                                      usedcrit=used_crit,
                                       level=LEVELS[0]))
             sys.exit(STATE_OK)
