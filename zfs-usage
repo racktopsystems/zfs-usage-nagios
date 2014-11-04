@@ -117,27 +117,27 @@ if __name__ == "__main__":
         if used_pct >= args.critical:
             print(used_pct)
             print(TPL.safe_substitute(dataset=ds,
-                                      used=add_suffix(used),
-                                      usedraw=used,
-                                      usedwarn=used_warn,
-                                      usedcrit=used_crit,
+                                      used=used,
+                                      usedraw=add_suffix(used),
+                                      usedwarn=add_suffix(used_warn),
+                                      usedcrit=add_suffix(used_crit),
                                       level=LEVELS[2]))
             sys.exit(STATE_CRITICAL)
 
         # If less than critical, but > or = warning, WARN
         elif used_pct >= args.warning:
             print(TPL.safe_substitute(dataset=ds,
-                                      used=add_suffix(used),
-                                      usedraw=used,
-                                      usedwarn=used_warn,
-                                      usedcrit=used_crit,
+                                      used=used,
+                                      usedraw=add_suffix(used),
+                                      usedwarn=add_suffix(used_warn),
+                                      usedcrit=add_suffix(used_crit),
                                       level=LEVELS[1]))
             sys.exit(STATE_WARNING)
         else:
             print(TPL.safe_substitute(dataset=ds,
-                                      used=add_suffix(used),
-                                      usedraw=used,
-                                      usedwarn=used_warn,
-                                      usedcrit=used_crit,
+                                      used=used,
+                                      usedraw=add_suffix(used),
+                                      usedwarn=add_suffix(used_warn),
+                                      usedcrit=add_suffix(used_crit),
                                       level=LEVELS[0]))
             sys.exit(STATE_OK)
